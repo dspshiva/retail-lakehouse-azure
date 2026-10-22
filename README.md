@@ -192,4 +192,4 @@ Single-node cluster, Photon off, auto-terminate at 15 minutes. All resources in 
 
 ## Author
 
-**Your Name** · Data Engineer · [LinkedIn](https://www.linkedin.com/in/d-shiva-prasad/) · dshiva065@gmail.com
+**D Shiva Prasad** · Data Engineer · [LinkedIn](https://www.linkedin.com/in/d-shiva-prasad/) · dshiva065@gmail.com
