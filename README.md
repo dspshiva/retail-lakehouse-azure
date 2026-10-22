@@ -10,12 +10,13 @@ An end-to-end data engineering project that builds a **Bronze / Silver / Gold la
 
 ```mermaid
 flowchart LR
-    S[Olist CSV files<br/>Source container] -->|ADLS copy, as-is| B[Raw<br/>ADLS Gen2]
-    C[(Control DB<br/>Azure SQL)] -->|config + watermark| D[Databricks]
-    B --> D
-    D -->|typed, validated, MERGE| E[Silver Delta]
+    A[Daily CSV files<br/>source container] -->|ADF copy, as-is| B[Raw<br/>ADLS Gen2]
+    C[(Control DB<br/>Azure SQL<br/>config + watermark)] -.drives.-> D
+    B --> D[Databricks<br/>Bronze Delta]
+    D -->|type, validate,<br/>dedupe, MERGE| E[Silver Delta]
     D -->|bad rows| Q[Quarantine Delta]
-    E -->|GROUP BY| F[Gold BI]
+    E -->F|Gold<br/>star schema]
+    F -->G[Power BI]
 ```
 
 ### Layers
@@ -56,7 +57,7 @@ The dataset is not included in this repo. Please download it from Kaggle.
 Olist is a static dataset, so `data_prep/split_olist.py` turns it into a realistic daily feed:
 
 - **History load:** everything before 2018-06-01 goes into one folder dated `2018-05-31`.
-- **Daily files:** 3–30 June 2018, one folder per day: `ingestion_date=YYYY-MM-DD/`.
+- **Daily files:** 1–30 June 2018, one folder per day: `ingestion_date=YYYY-MM-DD/`.
 - **Order updates:** an order appears first as `created`, then again later with its final status. A `last_updated_ts` column is added as the watermark.
 - **Simulated customer address changes** are added on some days, to demonstrate SCD Type 2 later.
 
@@ -74,11 +75,10 @@ retail-lakehouse-azure/
 ├── sql/
 │   └── 01_control_tables.sql   # ctl.pipeline_config + ctl.watermark_state
 ├── notebooks/
-│   ├── 01_common.py            # paths, column types, data quality rules
+│   ├── 00_common.py            # paths, column types, data quality rules
 │   ├── 01_bronze_ingest.py     # raw CSV -> Bronze Delta
 │   ├── 02_silver_transform.py  # Bronze -> typed, validated, MERGE into Silver
 │   ├── 03_dev_runner.py        # loops tables and dates (stands in for ADF during development)
-│   └── 04_tests.py             # idempotency, reconciliation, quarantine tests
 └── DOCS/
     └── screenshots/
 ```
@@ -148,11 +148,11 @@ rows_read = rows_rejected + rows_written + rows_deduped
 **Reconciliation and idempotency**
 
 ![Reconciliation and idempotency](DOCS/screenshots/5.png)
-![Reconciliation and idempotency](DOCS/screenshots/5.png)
+![Reconciliation and idempotency](DOCS/screenshots/6.png)
 
 **Quarantine: rejected rows with failed rules and original row**
 
-![Quarantine](DOCS/screenshots/6.png)
+![Quarantine](DOCS/screenshots/7.png)
 
 ---
 
@@ -170,7 +170,7 @@ rows_read = rows_rejected + rows_written + rows_deduped
 5. Run `sql/01_control_tables.sql` on the Azure SQL database.
 6. In ADF, copy `source` to `raw` (binary, preserve hierarchy).
 7. Give Databricks access to storage (Access Connector + Unity Catalog external locations).
-8. Import the notebooks into Databricks, set `STORAGE_ACCOUNT` in `01_common.py`, and run `03_dev_runner.py`.
+8. Import the notebooks into Databricks, set `STORAGE_ACCOUNT` in `00_common.py`, and run `03_dev_runner.py`.
 
 ---
 
