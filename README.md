@@ -15,7 +15,7 @@ flowchart LR
     B --> D[Databricks<br/>Bronze Delta]
     D -->|type, validate,<br/>dedupe, MERGE| E[Silver Delta]
     D -->|bad rows| Q[Quarantine Delta]
-    E -->F|Gold<br/>star schema]
+    E -->F[Gold<br/>star schema]
     F -->G[Power BI]
 ```
 
