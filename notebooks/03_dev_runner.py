@@ -171,9 +171,7 @@ print(n1, n2, "OK" if n1 == n2 else "PROBLEM")
 
 # COMMAND ----------
 
-bad_csv = """order_id,payment_sequential,payment_type,payment_installments,payment_value
-BAD001,1,bitcoin,1,50.00
-BAD002,1,credit_card,1,abc
+bad_csv = """order_id,payment_sequential,payment_type,payment_installments,payment_value BAD001,1,bitcoin,1,50.00 BAD002,1,credit_card,1,abc
 "",1,credit_card,1,10.00
 """
 

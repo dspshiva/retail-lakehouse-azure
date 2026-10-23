@@ -232,3 +232,11 @@ print("Common loaded")
 
 # COMMAND ----------
 
+def gold_path(table):
+    return path("gold",SOURCE_SYSTEM, table)
+
+LOW_DATE = "1900-01-01"
+HIGH_DATE = "9999-12-31"
+
+# COMMAND ----------
+

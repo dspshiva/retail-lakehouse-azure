@@ -1,0 +1,7 @@
+olist_raw/
+source_out/
+*.csv
+*.env
+secrets*
+.DS_Store
+__pycache__/
