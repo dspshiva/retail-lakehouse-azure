@@ -1,0 +1,24 @@
+{
+	"name": "ls_sql_ctl",
+	"type": "Microsoft.DataFactory/factories/linkedservices",
+	"properties": {
+		"annotations": [],
+		"type": "AzureSqlDatabase",
+		"typeProperties": {
+			"server": "sql-retail-lakehouse-sp-01.database.windows.net",
+			"database": "sqldb-ctl",
+			"encrypt": "mandatory",
+			"trustServerCertificate": false,
+			"authenticationType": "SQL",
+			"userName": "shivaretail",
+			"password": {
+				"type": "AzureKeyVaultSecret",
+				"store": {
+					"referenceName": "ls_kv",
+					"type": "LinkedServiceReference"
+				},
+				"secretName": "sql-ctl-password"
+			}
+		}
+	}
+}

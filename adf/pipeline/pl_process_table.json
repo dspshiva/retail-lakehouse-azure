@@ -1,0 +1,607 @@
+{
+	"name": "pl_process_table",
+	"properties": {
+		"activities": [
+			{
+				"name": "gm_source_exists",
+				"type": "GetMetadata",
+				"dependsOn": [],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"dataset": {
+						"referenceName": "ds_adls_binary",
+						"type": "DatasetReference",
+						"parameters": {
+							"p_container": {
+								"value": "@pipeline().parameters.source_container",
+								"type": "Expression"
+							},
+							"p_folder": {
+								"value": "@concat(pipeline().parameters.source_folder,'/ingestion_date=',pipeline().parameters.run_date)",
+								"type": "Expression"
+							}
+						}
+					},
+					"fieldList": [
+						"exists"
+					],
+					"storeSettings": {
+						"type": "AzureBlobFSReadSettings",
+						"recursive": true,
+						"enablePartitionDiscovery": false
+					},
+					"formatSettings": {
+						"type": "BinaryReadSettings"
+					}
+				}
+			},
+			{
+				"name": "If_exists",
+				"type": "IfCondition",
+				"dependsOn": [
+					{
+						"activity": "gm_source_exists",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"userProperties": [],
+				"typeProperties": {
+					"expression": {
+						"value": "@activity('gm_source_exists').output.exists",
+						"type": "Expression"
+					},
+					"ifFalseActivities": [
+						{
+							"name": "log_no_data",
+							"type": "SqlServerStoredProcedure",
+							"dependsOn": [],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"storedProcedureName": "[ctl].[usp_log_from_json]",
+								"storedProcedureParameters": {
+									"layer": {
+										"value": "raw",
+										"type": "String"
+									},
+									"pipeline_name": {
+										"value": {
+											"value": "@pipeline().Pipeline",
+											"type": "Expression"
+										},
+										"type": "String"
+									},
+									"result_json": {
+										"value": {
+											"value": "{\"status\":\"NO_DATA\",\"rows_read\":0,\"rows_written\":0}",
+											"type": "Expression"
+										},
+										"type": "String"
+									},
+									"run_date": {
+										"value": {
+											"value": "@pipeline().parameters.run_date",
+											"type": "Expression"
+										},
+										"type": "String"
+									},
+									"run_id": {
+										"value": {
+											"value": "@pipeline().parameters.run_id",
+											"type": "Expression"
+										},
+										"type": "String"
+									},
+									"table_name": {
+										"value": {
+											"value": "@pipeline().parameters.table_name",
+											"type": "Expression"
+										},
+										"type": "String"
+									}
+								}
+							},
+							"linkedServiceName": {
+								"referenceName": "ls_sql_ctl",
+								"type": "LinkedServiceReference"
+							}
+						}
+					],
+					"ifTrueActivities": [
+						{
+							"name": "copy_to_raw",
+							"type": "Copy",
+							"dependsOn": [],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 2,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"source": {
+									"type": "BinarySource",
+									"storeSettings": {
+										"type": "AzureBlobFSReadSettings",
+										"recursive": true
+									},
+									"formatSettings": {
+										"type": "BinaryReadSettings"
+									}
+								},
+								"sink": {
+									"type": "BinarySink",
+									"storeSettings": {
+										"type": "AzureBlobFSWriteSettings",
+										"copyBehavior": "PreserveHierarchy"
+									}
+								},
+								"enableStaging": false
+							},
+							"inputs": [
+								{
+									"referenceName": "ds_adls_binary",
+									"type": "DatasetReference",
+									"parameters": {
+										"p_container": {
+											"value": "@pipeline().parameters.source_container",
+											"type": "Expression"
+										},
+										"p_folder": {
+											"value": "@concat(pipeline().parameters.source_folder,'/ingestion_date=',pipeline().parameters.run_date)",
+											"type": "Expression"
+										}
+									}
+								}
+							],
+							"outputs": [
+								{
+									"referenceName": "ds_adls_binary",
+									"type": "DatasetReference",
+									"parameters": {
+										"p_container": "@pipeline().parameters.raw_container",
+										"p_folder": "@concat(pipeline().parameters.raw_folder,'/ingestion_date=',pipeline().parameters.run_date)"
+									}
+								}
+							]
+						},
+						{
+							"name": "nb_bronze",
+							"type": "DatabricksNotebook",
+							"dependsOn": [
+								{
+									"activity": "copy_to_raw",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"policy": {
+								"timeout": "0.01:00:00",
+								"retry": 2,
+								"retryIntervalInSeconds": 60,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"notebookPath": "/retail-lakehouse/01_bronze_ingest",
+								"baseParameters": {
+									"table_name": {
+										"value": "@pipeline().parameters.table_name",
+										"type": "Expression"
+									},
+									"run_date": {
+										"value": "@pipeline().parameters.run_date",
+										"type": "Expression"
+									},
+									"run_id": {
+										"value": "@pipeline().parameters.run_id",
+										"type": "Expression"
+									}
+								}
+							},
+							"linkedServiceName": {
+								"referenceName": "ls_databricks",
+								"type": "LinkedServiceReference"
+							}
+						},
+						{
+							"name": "log_bronze",
+							"type": "SqlServerStoredProcedure",
+							"dependsOn": [
+								{
+									"activity": "nb_bronze",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"storedProcedureName": "[ctl].[usp_log_from_json]",
+								"storedProcedureParameters": {
+									"layer": {
+										"value": "bronze",
+										"type": "String"
+									},
+									"pipeline_name": {
+										"value": {
+											"value": "@pipeline().Pipeline",
+											"type": "Expression"
+										},
+										"type": "String"
+									},
+									"result_json": {
+										"value": {
+											"value": "@string(activity('nb_bronze').output.runOutput)",
+											"type": "Expression"
+										},
+										"type": "String"
+									},
+									"run_date": {
+										"value": {
+											"value": "@pipeline().parameters.run_date",
+											"type": "Expression"
+										},
+										"type": "String"
+									},
+									"run_id": {
+										"value": {
+											"value": "@pipeline().parameters.run_id",
+											"type": "Expression"
+										},
+										"type": "String"
+									},
+									"table_name": {
+										"value": {
+											"value": "@pipeline().parameters.table_name",
+											"type": "Expression"
+										},
+										"type": "String"
+									}
+								}
+							},
+							"linkedServiceName": {
+								"referenceName": "ls_sql_ctl",
+								"type": "LinkedServiceReference"
+							}
+						},
+						{
+							"name": "nb_silver",
+							"type": "DatabricksNotebook",
+							"dependsOn": [
+								{
+									"activity": "log_bronze",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"policy": {
+								"timeout": "0.01:00:00",
+								"retry": 1,
+								"retryIntervalInSeconds": 60,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"notebookPath": "/retail-lakehouse/02_silver_transform",
+								"baseParameters": {
+									"table_name": {
+										"value": "@pipeline().parameters.table_name",
+										"type": "Expression"
+									},
+									"run_date": {
+										"value": "@pipeline().parameters.run_date",
+										"type": "Expression"
+									},
+									"run_id": {
+										"value": "@pipeline().parameters.run_id",
+										"type": "Expression"
+									},
+									"load_type": {
+										"value": "@pipeline().parameters.load_type",
+										"type": "Expression"
+									},
+									"primary_keys": {
+										"value": "@pipeline().parameters.primary_keys",
+										"type": "Expression"
+									},
+									"watermark_column": {
+										"value": "@pipeline().parameters.watermark_column",
+										"type": "Expression"
+									}
+								}
+							},
+							"linkedServiceName": {
+								"referenceName": "ls_databricks",
+								"type": "LinkedServiceReference"
+							}
+						},
+						{
+							"name": "log_silver",
+							"type": "SqlServerStoredProcedure",
+							"dependsOn": [
+								{
+									"activity": "nb_silver",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"storedProcedureName": "[ctl].[usp_log_from_json]",
+								"storedProcedureParameters": {
+									"layer": {
+										"value": "silver",
+										"type": "String"
+									},
+									"pipeline_name": {
+										"value": {
+											"value": "@pipeline().Pipeline",
+											"type": "Expression"
+										},
+										"type": "String"
+									},
+									"result_json": {
+										"value": {
+											"value": "@string(activity('nb_silver').output.runOutput)",
+											"type": "Expression"
+										},
+										"type": "String"
+									},
+									"run_date": {
+										"value": {
+											"value": "@pipeline().parameters.run_date",
+											"type": "Expression"
+										},
+										"type": "String"
+									},
+									"run_id": {
+										"value": {
+											"value": "@pipeline().parameters.run_id",
+											"type": "Expression"
+										},
+										"type": "String"
+									},
+									"table_name": {
+										"value": {
+											"value": "@pipeline().parameters.table_name",
+											"type": "Expression"
+										},
+										"type": "String"
+									}
+								}
+							},
+							"linkedServiceName": {
+								"referenceName": "ls_sql_ctl",
+								"type": "LinkedServiceReference"
+							}
+						},
+						{
+							"name": "sp_watermark",
+							"type": "SqlServerStoredProcedure",
+							"dependsOn": [
+								{
+									"activity": "log_silver",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"storedProcedureName": "[ctl].[usp_update_watermark]",
+								"storedProcedureParameters": {
+									"config_id": {
+										"value": {
+											"value": "@pipeline().parameters.config_id",
+											"type": "Expression"
+										},
+										"type": "Int32"
+									},
+									"run_date": {
+										"value": {
+											"value": "@pipeline().parameters.run_date",
+											"type": "Expression"
+										},
+										"type": "String"
+									},
+									"result_json": {
+										"value": {
+											"value": "@string(activity('nb_silver').output.runOutput)",
+											"type": "Expression"
+										},
+										"type": "String"
+									}
+								}
+							},
+							"linkedServiceName": {
+								"referenceName": "ls_sql_ctl",
+								"type": "LinkedServiceReference"
+							}
+						}
+					]
+				}
+			},
+			{
+				"name": "log_failure",
+				"type": "SqlServerStoredProcedure",
+				"dependsOn": [
+					{
+						"activity": "If_exists",
+						"dependencyConditions": [
+							"Failed"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"storedProcedureName": "[ctl].[usp_log_failure]",
+					"storedProcedureParameters": {
+						"error_message": {
+							"value": {
+								"value": "@activity('If_exists').error.message",
+								"type": "Expression"
+							},
+							"type": "String"
+						},
+						"layer": {
+							"value": "pipeline",
+							"type": "String"
+						},
+						"pipeline_name": {
+							"value": {
+								"value": "@pipeline().Pipeline",
+								"type": "Expression"
+							},
+							"type": "String"
+						},
+						"run_date": {
+							"value": {
+								"value": "@pipeline().parameters.run_date",
+								"type": "Expression"
+							},
+							"type": "String"
+						},
+						"run_id": {
+							"value": {
+								"value": "@pipeline().parameters.run_id",
+								"type": "Expression"
+							},
+							"type": "String"
+						},
+						"table_name": {
+							"value": {
+								"value": "@pipeline().parameters.table_name",
+								"type": "Expression"
+							},
+							"type": "String"
+						}
+					}
+				},
+				"linkedServiceName": {
+					"referenceName": "ls_sql_ctl",
+					"type": "LinkedServiceReference"
+				}
+			},
+			{
+				"name": "fail_table",
+				"type": "Fail",
+				"dependsOn": [
+					{
+						"activity": "log_failure",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"userProperties": [],
+				"typeProperties": {
+					"message": {
+						"value": "@concat('Table ', pipeline().parameters.table_name, ' failed for ', pipeline().parameters.run_date)",
+						"type": "Expression"
+					},
+					"errorCode": "TABLE_FAILED"
+				}
+			}
+		],
+		"parameters": {
+			"run_date": {
+				"type": "string",
+				"defaultValue": "2018-06-02"
+			},
+			"run_id": {
+				"type": "string",
+				"defaultValue": "test-child"
+			},
+			"table_name": {
+				"type": "string",
+				"defaultValue": "orders"
+			},
+			"source_container": {
+				"type": "string",
+				"defaultValue": "source"
+			},
+			"source_folder": {
+				"type": "string",
+				"defaultValue": "olist/orders"
+			},
+			"raw_container": {
+				"type": "string",
+				"defaultValue": "raw"
+			},
+			"raw_folder": {
+				"type": "string",
+				"defaultValue": "olist/orders"
+			},
+			"load_type": {
+				"type": "string",
+				"defaultValue": "incremental"
+			},
+			"primary_keys": {
+				"type": "string",
+				"defaultValue": "order_id"
+			},
+			"watermark_column": {
+				"type": "string",
+				"defaultValue": "last_updated_ts"
+			},
+			"config_id": {
+				"type": "int",
+				"defaultValue": 6
+			}
+		},
+		"annotations": [],
+		"lastPublishTime": "2026-10-25T06:38:11Z"
+	},
+	"type": "Microsoft.DataFactory/factories/pipelines"
+}

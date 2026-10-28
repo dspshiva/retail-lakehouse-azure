@@ -1,0 +1,31 @@
+{
+	"name": "tr_daily_tumbling",
+	"properties": {
+		"description": "Tumbling window trigger for historical backfill of 2018 data",
+		"annotations": [],
+		"runtimeState": "Stopped",
+		"pipeline": {
+			"pipelineReference": {
+				"referenceName": "pl_master_daily",
+				"type": "PipelineReference"
+			},
+			"parameters": {
+				"run_date": "@formatDateTime(trigger().outputs.windowStartTime,'yyyy-MM-dd')"
+			}
+		},
+		"type": "TumblingWindowTrigger",
+		"typeProperties": {
+			"frequency": "Hour",
+			"interval": 24,
+			"startTime": "2018-06-01T00:00:00Z",
+			"endTime": "2018-06-03T00:00:00Z",
+			"delay": "00:00:00",
+			"maxConcurrency": 1,
+			"retryPolicy": {
+				"count": 1,
+				"intervalInSeconds": 120
+			},
+			"dependsOn": []
+		}
+	}
+}

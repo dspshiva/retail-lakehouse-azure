@@ -1,0 +1,15 @@
+{
+	"name": "adf-retail-lakehouse-dev-sp",
+	"properties": {
+		"trustModeClaimForMi": {
+			"value": "Disabled",
+			"editable": true
+		}
+	},
+	"location": "eastus",
+	"identity": {
+		"type": "SystemAssigned",
+		"principalId": "bb11297f-ca8e-43d6-9a51-569621f6a4bc",
+		"tenantId": "782071c3-5cda-47ba-aba8-178dda119e76"
+	}
+}

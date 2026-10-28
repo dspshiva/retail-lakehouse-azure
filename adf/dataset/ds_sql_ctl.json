@@ -1,0 +1,17 @@
+{
+	"name": "ds_sql_ctl",
+	"properties": {
+		"linkedServiceName": {
+			"referenceName": "ls_sql_ctl",
+			"type": "LinkedServiceReference"
+		},
+		"annotations": [],
+		"type": "AzureSqlTable",
+		"schema": [],
+		"typeProperties": {
+			"schema": "ctl",
+			"table": "watermark_state"
+		}
+	},
+	"type": "Microsoft.DataFactory/factories/datasets"
+}

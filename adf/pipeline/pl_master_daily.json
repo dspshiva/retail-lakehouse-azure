@@ -1,0 +1,509 @@
+{
+	"name": "pl_master_daily",
+	"properties": {
+		"activities": [
+			{
+				"name": "lkp_config",
+				"type": "Lookup",
+				"dependsOn": [],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"source": {
+						"type": "AzureSqlSource",
+						"sqlReaderQuery": "SELECT c.config_id, c.table_name, c.source_container, c.source_folder, c.raw_container,\n       c.raw_folder, c.load_type, c.primary_keys, ISNULL(c.watermark_column, '') AS watermark_column\nFROM ctl.pipeline_config c\nWHERE c.is_active = 1\nORDER BY c.load_order, c.table_name",
+						"queryTimeout": "02:00:00",
+						"partitionOption": "None"
+					},
+					"dataset": {
+						"referenceName": "ds_sql_ctl",
+						"type": "DatasetReference"
+					},
+					"firstRowOnly": false
+				}
+			},
+			{
+				"name": "fe_tables",
+				"type": "ForEach",
+				"dependsOn": [
+					{
+						"activity": "lkp_config",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"userProperties": [],
+				"typeProperties": {
+					"items": {
+						"value": "@activity('lkp_config').output.value",
+						"type": "Expression"
+					},
+					"isSequential": true,
+					"activities": [
+						{
+							"name": "ep_process_table",
+							"type": "ExecutePipeline",
+							"dependsOn": [],
+							"policy": {
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"pipeline": {
+									"referenceName": "pl_process_table",
+									"type": "PipelineReference"
+								},
+								"waitOnCompletion": true,
+								"parameters": {
+									"run_date": {
+										"value": "@pipeline().parameters.run_date",
+										"type": "Expression"
+									},
+									"run_id": {
+										"value": "@pipeline().RunId",
+										"type": "Expression"
+									},
+									"table_name": {
+										"value": "@item().table_name",
+										"type": "Expression"
+									},
+									"source_container": {
+										"value": "@item().source_container",
+										"type": "Expression"
+									},
+									"source_folder": {
+										"value": "@item().source_folder",
+										"type": "Expression"
+									},
+									"raw_container": {
+										"value": "@item().raw_container",
+										"type": "Expression"
+									},
+									"raw_folder": {
+										"value": "@item().raw_folder",
+										"type": "Expression"
+									},
+									"load_type": {
+										"value": "@item().load_type",
+										"type": "Expression"
+									},
+									"primary_keys": {
+										"value": "@item().primary_keys",
+										"type": "Expression"
+									},
+									"watermark_column": {
+										"value": "@item().watermark_column",
+										"type": "Expression"
+									},
+									"config_id": {
+										"value": "@item().config_id",
+										"type": "Expression"
+									}
+								}
+							}
+						}
+					]
+				}
+			},
+			{
+				"name": "If_gold",
+				"type": "IfCondition",
+				"dependsOn": [
+					{
+						"activity": "fe_tables",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"userProperties": [],
+				"typeProperties": {
+					"expression": {
+						"value": "@equals(1,1)",
+						"type": "Expression"
+					},
+					"ifTrueActivities": [
+						{
+							"name": "nb_gold_dimensions",
+							"type": "DatabricksNotebook",
+							"dependsOn": [],
+							"policy": {
+								"timeout": "0.01:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"notebookPath": "/retail-lakehouse/04_gold_dimensions",
+								"baseParameters": {
+									"run_date": {
+										"value": "@pipeline().parameters.run_date",
+										"type": "Expression"
+									},
+									"run_id": {
+										"value": "@pipeline().RunId",
+										"type": "Expression"
+									}
+								}
+							},
+							"linkedServiceName": {
+								"referenceName": "ls_databricks",
+								"type": "LinkedServiceReference"
+							}
+						},
+						{
+							"name": "log_gold_dimensions",
+							"type": "SqlServerStoredProcedure",
+							"dependsOn": [
+								{
+									"activity": "nb_gold_dimensions",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"storedProcedureName": "[ctl].[usp_log_from_json]",
+								"storedProcedureParameters": {
+									"layer": {
+										"value": "gold",
+										"type": "String"
+									},
+									"pipeline_name": {
+										"value": {
+											"value": "@pipeline().Pipeline",
+											"type": "Expression"
+										},
+										"type": "String"
+									},
+									"result_json": {
+										"value": {
+											"value": "@string(activity('nb_gold_dimensions').output.runOutput)",
+											"type": "Expression"
+										},
+										"type": "String"
+									},
+									"run_date": {
+										"value": {
+											"value": "@pipeline().parameters.run_date",
+											"type": "Expression"
+										},
+										"type": "String"
+									},
+									"run_id": {
+										"value": {
+											"value": "@pipeline().RunId",
+											"type": "Expression"
+										},
+										"type": "String"
+									},
+									"table_name": {
+										"value": "dimensions",
+										"type": "String"
+									}
+								}
+							},
+							"linkedServiceName": {
+								"referenceName": "ls_sql_ctl",
+								"type": "LinkedServiceReference"
+							}
+						},
+						{
+							"name": "nb_gold_facts",
+							"type": "DatabricksNotebook",
+							"dependsOn": [
+								{
+									"activity": "log_gold_dimensions",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"policy": {
+								"timeout": "0.01:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"notebookPath": "/retail-lakehouse/05_gold_facts",
+								"baseParameters": {
+									"run_date": {
+										"value": "@pipeline().parameters.run_date",
+										"type": "Expression"
+									},
+									"run_id": {
+										"value": "@pipeline().RunId",
+										"type": "Expression"
+									}
+								}
+							},
+							"linkedServiceName": {
+								"referenceName": "ls_databricks",
+								"type": "LinkedServiceReference"
+							}
+						},
+						{
+							"name": "log_gold_facts",
+							"type": "SqlServerStoredProcedure",
+							"dependsOn": [
+								{
+									"activity": "nb_gold_facts",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"storedProcedureName": "[ctl].[usp_log_from_json]",
+								"storedProcedureParameters": {
+									"layer": {
+										"value": "gold",
+										"type": "String"
+									},
+									"pipeline_name": {
+										"value": {
+											"value": "@pipeline().Pipeline",
+											"type": "Expression"
+										},
+										"type": "String"
+									},
+									"result_json": {
+										"value": {
+											"value": "@string(activity('nb_gold_facts').output.runOutput)",
+											"type": "Expression"
+										},
+										"type": "String"
+									},
+									"run_date": {
+										"value": {
+											"value": "@pipeline().parameters.run_date",
+											"type": "Expression"
+										},
+										"type": "String"
+									},
+									"run_id": {
+										"value": {
+											"value": "@pipeline().RunId",
+											"type": "Expression"
+										},
+										"type": "String"
+									},
+									"table_name": {
+										"value": "facts",
+										"type": "String"
+									}
+								}
+							},
+							"linkedServiceName": {
+								"referenceName": "ls_sql_ctl",
+								"type": "LinkedServiceReference"
+							}
+						},
+						{
+							"name": "nb_gold_aggregates",
+							"type": "DatabricksNotebook",
+							"dependsOn": [
+								{
+									"activity": "log_gold_facts",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"policy": {
+								"timeout": "0.01:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"notebookPath": "/retail-lakehouse/06_gold_aggregates",
+								"baseParameters": {
+									"run_date": {
+										"value": "@pipeline().parameters.run_date",
+										"type": "Expression"
+									},
+									"run_id": {
+										"value": "@pipeline().RunId",
+										"type": "Expression"
+									}
+								}
+							},
+							"linkedServiceName": {
+								"referenceName": "ls_databricks",
+								"type": "LinkedServiceReference"
+							}
+						},
+						{
+							"name": "log_gold_aggregates",
+							"type": "SqlServerStoredProcedure",
+							"dependsOn": [
+								{
+									"activity": "nb_gold_aggregates",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"policy": {
+								"timeout": "0.01:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"storedProcedureName": "[ctl].[usp_log_from_json]",
+								"storedProcedureParameters": {
+									"layer": {
+										"value": "gold",
+										"type": "String"
+									},
+									"pipeline_name": {
+										"value": {
+											"value": "@pipeline().Pipeline",
+											"type": "Expression"
+										},
+										"type": "String"
+									},
+									"result_json": {
+										"value": {
+											"value": "@string(activity('nb_gold_aggregates').output.runOutput)",
+											"type": "Expression"
+										},
+										"type": "String"
+									},
+									"run_date": {
+										"value": {
+											"value": "@pipeline().parameters.run_date",
+											"type": "Expression"
+										},
+										"type": "String"
+									},
+									"run_id": {
+										"value": {
+											"value": "@pipeline().RunId",
+											"type": "Expression"
+										},
+										"type": "String"
+									},
+									"table_name": {
+										"value": "aggregates",
+										"type": "String"
+									}
+								}
+							},
+							"linkedServiceName": {
+								"referenceName": "ls_sql_ctl",
+								"type": "LinkedServiceReference"
+							}
+						}
+					]
+				}
+			},
+			{
+				"name": "log_gold_failure",
+				"type": "SqlServerStoredProcedure",
+				"dependsOn": [
+					{
+						"activity": "If_gold",
+						"dependencyConditions": [
+							"Failed"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "0.01:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"storedProcedureName": "[ctl].[usp_log_failure]",
+					"storedProcedureParameters": {
+						"error_message": {
+							"value": {
+								"value": "@activity('If_gold').error.message",
+								"type": "Expression"
+							},
+							"type": "String"
+						},
+						"layer": {
+							"value": "gold",
+							"type": "String"
+						},
+						"table_name": {
+							"value": "gold_block",
+							"type": "String"
+						}
+					}
+				},
+				"linkedServiceName": {
+					"referenceName": "ls_sql_ctl",
+					"type": "LinkedServiceReference"
+				}
+			},
+			{
+				"name": "fail_gold",
+				"type": "Fail",
+				"dependsOn": [
+					{
+						"activity": "log_gold_failure",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"userProperties": [],
+				"typeProperties": {
+					"message": {
+						"value": "@concat('Gold block failed for ', pipeline().parameters.run_date)",
+						"type": "Expression"
+					},
+					"errorCode": "GOLD_FAILED"
+				}
+			}
+		],
+		"parameters": {
+			"run_date": {
+				"type": "string"
+			}
+		},
+		"annotations": [],
+		"lastPublishTime": "2026-10-25T11:17:29Z"
+	},
+	"type": "Microsoft.DataFactory/factories/pipelines"
+}

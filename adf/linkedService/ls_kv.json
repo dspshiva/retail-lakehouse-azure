@@ -1,0 +1,11 @@
+{
+	"name": "ls_kv",
+	"type": "Microsoft.DataFactory/factories/linkedservices",
+	"properties": {
+		"annotations": [],
+		"type": "AzureKeyVault",
+		"typeProperties": {
+			"baseUrl": "https://kv-retail-lakehouse-dsp.vault.azure.net/"
+		}
+	}
+}
