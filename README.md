@@ -2,7 +2,7 @@
 
 An end-to-end data engineering project that builds a **Bronze / Silver / Gold lakehouse** on Azure using the Olist Brazilian e-commerce dataset. Files arrive as simulated daily batches and are loaded **incrementally and idempotently** by parameterized Databricks notebooks. The notebooks are designed to be driven by a **metadata control table**; ADF orchestration on top of it is the next phase.
 
-> **Status:** Work in progress. Phases 1–3 are complete (ingestion, Bronze, Silver, data quality, Gold star schema with SCD Type 2). See the [Roadmap](#roadmap).
+> **Status:** Complete. Phases 1–5 are fully implemented (ingestion, Bronze, Silver, data quality, Gold star schema with SCD Type 2, ADF orchestration, CI/CD pipelines, performance tuning, and executive Power BI dashboards).
 
 ---
 
@@ -41,11 +41,12 @@ flowchart LR
 - PySpark
 - Delta Lake
 - Azure SQL Database (control and audit tables)
+- Azure Key Vault
+- Power BI
 - Python
 - SQL
-- Git/GitHub
+- Git/GitHub Actions(CI/CD)
 
-*Planned: Azure Key Vault, Power BI, CI/CD.*
 
 ---
 
@@ -63,6 +64,60 @@ Olist is a static dataset, so `data_prep/split_olist.py` turns it into a realist
 - **Simulated customer address changes** on six days (5, 10, 15, 20, 25 and 30 June), 30 customers each, to demonstrate SCD Type 2.
 
 > The order updates and address changes are **simulated**. They are not original Olist events.
+
+---
+
+## Orchestration (Azure Data Factory)
+
+One parameterized pipeline, `pl_process_table`, handles every table. `pl_master_daily` reads the active tables from `ctl.pipeline_config` (Lookup), runs them in `load_order` (ForEach), and then runs the Gold notebooks.
+
+- Per table: check the source folder, copy to raw, run Bronze, run Silver, update the watermark.
+- A day without a file is logged as `NO_DATA` and skipped.
+- Copy and notebook activities retry. Every notebook is idempotent, so a retry cannot create duplicates.
+- A failure handler writes a `FAILED` row to `ctl.pipeline_run_log` and a Fail activity marks the run as failed, so an Azure Monitor alert sends an email.
+- A tumbling window trigger gives each run its own date window and backfills past days one at a time.
+
+*pl_process_table*
+![ADF Process Table Pipeline](DOCS/screenshots/adf_process_table.png)
+
+*pl_master_daily*
+![ADF Master Pipeline](DOCS/screenshots/adf_master.png)
+
+---
+
+## Performance tuning
+
+Benchmarked on a 50x scaled copy of `fact_order_items` (5.6M rows), because the real data is too small to show differences. Layout A: no partition, 400 small files. Layout B: partitioned by month, `OPTIMIZE`, `ZORDER BY (product_key)`.
+
+| Query | Before (sec) | After (sec) |
+|---|---|---|
+| One product | 3.95 | 0.61 |
+| One month | 3.68 | 0.47 |
+| One product and month | 3.29 | 0.47 |
+| Top 10 sellers (full scan) | 4.35 | 1.86 |
+
+Full scans do not improve with file layout, which is expected.
+
+*Tuning before result*
+![Tuning before_result](DOCS/screenshots/tuning_before.png)
+*Tuning after result*
+![Tuning after_result](DOCS/screenshots/tuning_after.png)
+
+---
+
+## Security, Git and CI
+
+- Secrets are stored in Azure Key Vault and read by ADF through its managed identity (role: Key Vault Secrets User). Rotation was tested without editing the pipeline.
+- ADF is Git-integrated (`adf/` folder). GitHub Actions runs on every pull request: Python syntax check, secret scan, ADF validation and ARM template export.
+- Continuous deployment is designed (the ARM template artifact) but not executed, because there is only one environment.
+
+---
+
+## Dashboard
+
+Power BI (Import mode) on the Gold layer. Customer state comes through the SCD2 key, so it shows the address at purchase time. Surrogate keys are exposed as text to avoid rounding of 64-bit numbers.
+
+![Dashboard](DOCS/screenshots/powerbi.png)
 
 ---
 
@@ -103,12 +158,12 @@ dim_customer --- fact_order_items --- dim_product      grain: one row per order 
 ```
 retail-lakehouse-azure/
 ├── README.md
-├── .gitignore
 ├── data_prep/
 │   └── split_olist.py            # builds daily batch files from the Kaggle CSVs
 ├── sql/
 │   ├── 01_control_tables.sql     # ctl.pipeline_config + ctl.watermark_state
-│   └── 02_audit_log.sql          # ctl.pipeline_run_log, usp_log_run, vw_latest_run
+│   ├── 02_audit_log.sql          # ctl.pipeline_run_log, usp_log_run, vw_latest_run
+|   └── 03_pipeline_support.sql
 ├── notebooks/
 │   ├── 00_common.py              # paths, column types, data quality rules, gold helpers
 │   ├── 01_bronze_ingest.py       # raw CSV -> Bronze Delta
@@ -118,9 +173,11 @@ retail-lakehouse-azure/
 │   ├── 05_gold_facts.py          # fact_orders, fact_order_items (MERGE)
 │   ├── 06_gold_aggregates.py     # business aggregates
 │   ├── 07_gold_tests.py          # read-only validation tests
-│   └── 08_gold_runner.py         # runs dimensions then facts for each day
+│   ├── 08_gold_runner.py         # runs dimensions then facts for each day
+|   └── 09_pref_tuning.py         # Performance tuning
 └── DOCS/
-    └── screenshots/
+    ├── screenshots/
+    └── powerbi/
 ```
 
 ---
@@ -231,6 +288,15 @@ rows_read = rows_rejected + rows_written + rows_deduped
 
 ---
 
+## Limitations
+
+- Order updates and customer address changes are simulated.
+- `customer_id` is created per order in Olist; SCD2 is tracked at `customer_id` level.
+- The pipeline runs tables one by one on a single small cluster; production would run each `load_order` group in parallel.
+- Databricks is called with a personal access token stored in Key Vault.
+
+---
+
 ## How to run
 
 1. Create an Azure resource group with ADLS Gen2 storage (hierarchical namespace on), Data Factory, Databricks workspace, and Azure SQL Database.
@@ -262,8 +328,8 @@ Single-node cluster, Photon off, auto-terminate at 15 minutes. All resources in 
 - [x] **Phase 1:** Azure setup, ADLS layout, daily file simulation, control tables, ADF connections
 - [x] **Phase 2:** Bronze, Silver, data quality, quarantine, idempotency tests
 - [x] **Phase 3:** Gold star schema, SCD Type 2, Delta MERGE, aggregates, audit log table
-- [ ] **Phase 4:** Metadata-driven ADF pipeline, triggers, retries, failure alerts, audit logging
-- [ ] **Phase 5:** Performance tuning (partitioning, OPTIMIZE, Z-ORDER, before/after), Key Vault, Git integration, CI/CD, Power BI dashboard
+- [x] **Phase 4:** Metadata-driven ADF pipeline, triggers, retries, failure alerts, audit logging
+- [x] **Phase 5:** Performance tuning (partitioning, OPTIMIZE, Z-ORDER, before/after), Key Vault, Git integration, CI/CD, Power BI dashboard
 
 ---
 
