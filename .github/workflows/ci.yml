@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  python-and-secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install flake8
+        run: pip install flake8
+      - name: Python syntax check
+        run: python -m compileall -q notebooks data_prep
+      - name: Lint (syntax errors only)
+        run: flake8 notebooks data_prep --select=E9,F63,F7 --show-source
+      - name: Scan for secrets
+        run: |
+          if grep -rniE "dapi[0-9a-f]{20,}|AccountKey=|(password|pwd)[[:space:]]*=[[:space:]]*['\"][^'\"]+['\"]" . \
+               --include=*.py --include=*.sql --include=*.json --include=*.md \
+               --exclude-dir=node_modules --exclude-dir=.git; then
+            echo "Possible secret found"
+            exit 1
+          fi
+
+  adf-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.x"
+      - name: Install ADF utilities
+        run: npm install
+        working-directory: ${{ github.workspace }}/adf-build
+      - name: Validate ADF resources
+        run: npm run build validate ${{ github.workspace }}/adf ${{ secrets.ADF_RESOURCE_ID }}
+        working-directory: ${{ github.workspace }}/adf-build
+      - name: Export ARM template
+        run: npm run build export ${{ github.workspace }}/adf ${{ secrets.ADF_RESOURCE_ID }} "ArmTemplate"
+        working-directory: ${{ github.workspace }}/adf-build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: adf-arm-template
+          path: ${{ github.workspace }}/adf-build/ArmTemplate
+          if-no-files-found: error
