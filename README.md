@@ -1,6 +1,6 @@
 # Retail Lakehouse: Metadata-Driven Incremental Pipelines on Azure
 
-An end-to-end data engineering project that builds a **Bronze / Silver / Gold lakehouse** on Azure using the Olist Brazilian e-commerce dataset. Files arrive as simulated daily batches and are loaded **incrementally and idempotently** by parameterized Databricks notebooks. The notebooks are designed to be driven by a **metadata control table**; ADF orchestration on top of it is the next phase.
+An end-to-end data engineering project that builds a **Bronze / Silver / Gold lakehouse** on Azure using the Olist Brazilian e-commerce dataset. Files arrive as simulated daily batches and are loaded **incrementally and idempotently** by parameterized Databricks notebooks, orchestrated by **Metadata-Driven Azure Data Factory pipelines** that read a control table.
 
 > **Status:** Complete. Phases 1–5 are fully implemented (ingestion, Bronze, Silver, data quality, Gold star schema with SCD Type 2, ADF orchestration, CI/CD pipelines, performance tuning, and executive Power BI dashboards).
 
@@ -11,13 +11,13 @@ An end-to-end data engineering project that builds a **Bronze / Silver / Gold la
 ```mermaid
 flowchart LR
     A[Daily CSV files<br/>source container] -->|ADF copy, as-is| B[Raw<br/>ADLS Gen2]
-    C[(Control DB<br/>Azure SQL<br/>config, watermark, audit log)] -.->|drives in Phase 4| D
+    C[(Control DB<br/>Azure SQL<br/>config, watermark, audit log)] -->|config + watermark| D
     B --> D[Databricks<br/>Bronze Delta]
     D -->|type, validate,<br/>dedupe, MERGE| E[Silver Delta]
     D -->|bad rows| Q[Quarantine Delta]
     E --> F[Gold star schema<br/>SCD Type 2 dim_customer]
     F --> H[Aggregates]
-    H --> G[Power BI, planned]
+    H --> G[Power BI]
 ```
 
 ### Layers
@@ -77,10 +77,12 @@ One parameterized pipeline, `pl_process_table`, handles every table. `pl_master_
 - A failure handler writes a `FAILED` row to `ctl.pipeline_run_log` and a Fail activity marks the run as failed, so an Azure Monitor alert sends an email.
 - A tumbling window trigger gives each run its own date window and backfills past days one at a time.
 
-*pl_process_table*
+**pl_process_table**
+
 ![ADF Process Table Pipeline](DOCS/screenshots/adf_process_table.png)
 
-*pl_master_daily*
+**pl_master_daily**
+
 ![ADF Master Pipeline](DOCS/screenshots/adf_master.png)
 
 ---
@@ -99,8 +101,11 @@ Benchmarked on a 50x scaled copy of `fact_order_items` (5.6M rows), because the 
 Full scans do not improve with file layout, which is expected.
 
 *Tuning before result*
+
 ![Tuning before_result](DOCS/screenshots/tuning_before.png)
+
 *Tuning after result*
+
 ![Tuning after_result](DOCS/screenshots/tuning_after.png)
 
 ---
@@ -174,7 +179,7 @@ retail-lakehouse-azure/
 │   ├── 06_gold_aggregates.py     # business aggregates
 │   ├── 07_gold_tests.py          # read-only validation tests
 │   ├── 08_gold_runner.py         # runs dimensions then facts for each day
-|   └── 09_pref_tuning.py         # Performance tuning
+|   └── 09_perf_tuning.py         # Performance tuning
 └── DOCS/
     ├── screenshots/
     └── powerbi/
@@ -187,9 +192,9 @@ retail-lakehouse-azure/
 | Decision | Why |
 |---|---|
 | **Config table + state table are separate** | Config changes by deployment; watermark changes every run. Separate tables stop a config update from overwriting the watermark. |
-| **Parameterized notebooks, metadata-driven by design** | The same notebooks handle all 9 tables; table name, keys, load type and watermark come in as parameters. For now a dev runner holds a copy of the config. In Phase 4, ADF will read `ctl.pipeline_config`, so adding a table means inserting one config row. |
+| **Parameterized notebooks, metadata-driven** | The same notebooks handle all 9 tables; table name, keys, load type and watermark come in as parameters. ADF reads `ctl.pipeline_config`, so adding a table means inserting one config row. The dev runner keeps a copy of the config for testing. |
 | **Raw layer is a binary copy** | ADF does not parse anything, so raw stays exactly as received and odd characters cannot break the copy. |
-| **Managed identity for storage access** | ADF and Databricks reach storage without keys to leak or rotate. (The SQL login is a password for now and moves to Key Vault later.) |
+| **Managed identity and Key Vault** | ADF and Databricks reach storage through managed identity, with no keys to leak or rotate. Secrets are stored in Azure Key Vault and read by ADF through its managed identity. |
 | **Loading never fails because of a bad value** | Typing happens in Silver; bad values become NULL and are flagged for quarantine. Blank strings are also converted to NULL, after my own test showed an empty `order_id` passing the NOT NULL rule. |
 | **Two watermarks** | Ingestion date is the file-level watermark (which day to load). `last_updated_ts` is the record-level watermark (which version is newest). |
 | **MERGE with `s.last_updated_ts >= t.last_updated_ts`** | A late or old file cannot overwrite a newer record. |
@@ -197,7 +202,7 @@ retail-lakehouse-azure/
 | **Full vs incremental** | Full tables are replaced with a snapshot. Incremental tables are upserted with MERGE. |
 | **Hash surrogate keys (`xxhash64`)** | The same business key gives the same key on every run, so reruns never change keys and facts need no lookup. |
 | **Facts rebuilt from Silver for touched orders, then MERGE** | An order's status and review arrive on different days; any of those events refreshes the order, and the result is the same however often it runs. |
-| **Audit table in Azure SQL** | Every notebook returns the same count fields, so ADF can log each run through one stored procedure (Phase 4). |
+| **Audit table in Azure SQL** | Every notebook returns the same count fields, so ADF logs each run through one stored procedure. |
 
 ---
 
@@ -250,8 +255,8 @@ rows_read = rows_rejected + rows_written + rows_deduped
 
 **Reconciliation and idempotency**
 
-![Reconciliation and idempotency](DOCS/screenshots/5.png)
-![Reconciliation and idempotency](DOCS/screenshots/6.png)
+![Reconciliation](DOCS/screenshots/5.png)
+![idempotency](DOCS/screenshots/6.png)
 
 **Quarantine: rejected rows with failed rules and original row**
 
