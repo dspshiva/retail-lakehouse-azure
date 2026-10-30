@@ -1,4 +1,5 @@
 # Retail Lakehouse: Metadata-Driven Incremental Pipelines on Azure
+[![CI](https://github.com/dspshiva/retail-lakehouse-azure/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dspshiva/retail-lakehouse-azure/actions/workflows/ci.yml)
 
 An end-to-end data engineering project that builds a **Bronze / Silver / Gold lakehouse** on Azure using the Olist Brazilian e-commerce dataset. Files arrive as simulated daily batches and are loaded **incrementally and idempotently** by parameterized Databricks notebooks, orchestrated by **Metadata-Driven Azure Data Factory pipelines** that read a control table.
 
