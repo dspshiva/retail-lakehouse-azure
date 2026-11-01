@@ -3,7 +3,7 @@
 
 An end-to-end data engineering project that builds a **Bronze / Silver / Gold lakehouse** on Azure using the Olist Brazilian e-commerce dataset. Files arrive as simulated daily batches and are loaded **incrementally and idempotently** by parameterized Databricks notebooks, orchestrated by **Metadata-Driven Azure Data Factory pipelines** that read a control table.
 
-> **Status:** Complete. Phases 1–5 are fully implemented (ingestion, Bronze, Silver, data quality, Gold star schema with SCD Type 2, ADF orchestration, CI/CD pipelines, performance tuning, and executive Power BI dashboards).
+> **Status:** Complete. Phases 1–5 are implemented: ingestion, Bronze, Silver, data quality, Gold star schema with SCD Type 2, ADF orchestration, performance tuning, Key Vault, Git, CI and a Power BI dashboard.
 
 ---
 
@@ -11,14 +11,17 @@ An end-to-end data engineering project that builds a **Bronze / Silver / Gold la
 
 ```mermaid
 flowchart LR
-    A[Daily CSV files<br/>source container] -->|ADF copy, as-is| B[Raw<br/>ADLS Gen2]
-    C[(Control DB<br/>Azure SQL<br/>config, watermark, audit log)] -->|config + watermark| D
-    B --> D[Databricks<br/>Bronze Delta]
-    D -->|type, validate,<br/>dedupe, MERGE| E[Silver Delta]
-    D -->|bad rows| Q[Quarantine Delta]
-    E --> F[Gold star schema<br/>SCD Type 2 dim_customer]
-    F --> H[Aggregates]
-    H --> G[Power BI]
+    S[Source container<br/>daily CSV files] --> ADF[Azure Data Factory<br/>metadata-driven]
+    CT[(Control DB<br/>Azure SQL<br/>config, watermark, audit log)] -->|Lookup| ADF
+    ADF -->|copy as-is| R[Raw<br/>ADLS Gen2]
+    ADF -->|run notebooks| DBX[Databricks]
+    R --> BR[Bronze Delta]
+    BR -->|typed, validated, MERGE| SV[Silver Delta]
+    BR -->|bad rows| Q[Quarantine Delta]
+    SV --> G[Gold star schema<br/>SCD Type 2 dim_customer]
+    G --> AG[Aggregates]
+    AG --> PBI[Power BI]
+    ADF -->|run log| CT
 ```
 
 ### Layers
@@ -99,7 +102,7 @@ Benchmarked on a 50x scaled copy of `fact_order_items` (5.6M rows), because the 
 | One product and month | 3.29 | 0.47 |
 | Top 10 sellers (full scan) | 4.35 | 1.86 |
 
-Full scans do not improve with file layout, which is expected.
+The top-10-sellers query still scans all data, so partitioning and Z-ORDER cannot skip anything. It improved (4.35 s to 1.86 s) mainly because OPTIMIZE compacted 400 small files into a few large ones, which removes per-file overhead.
 
 *Tuning before result*
 
@@ -164,26 +167,31 @@ dim_customer --- fact_order_items --- dim_product      grain: one row per order 
 ```
 retail-lakehouse-azure/
 ├── README.md
+├── .gitignore
+├── .github/workflows/ci.yml      # CI: Python syntax, secret scan, ADF validation, ARM export
+├── adf/                          # ADF Git integration: pipelines, datasets, linked services, trigger
+├── adf-build/package.json        # npm package used by CI to validate ADF
 ├── data_prep/
 │   └── split_olist.py            # builds daily batch files from the Kaggle CSVs
 ├── sql/
 │   ├── 01_control_tables.sql     # ctl.pipeline_config + ctl.watermark_state
 │   ├── 02_audit_log.sql          # ctl.pipeline_run_log, usp_log_run, vw_latest_run
-|   └── 03_pipeline_support.sql
+│   └── 03_pipeline_support.sql   # usp_log_from_json, usp_log_failure, usp_update_watermark
 ├── notebooks/
 │   ├── 00_common.py              # paths, column types, data quality rules, gold helpers
 │   ├── 01_bronze_ingest.py       # raw CSV -> Bronze Delta
 │   ├── 02_silver_transform.py    # Bronze -> typed, validated, MERGE into Silver
-│   ├── 03_dev_runner.py          # loops tables and dates (stands in for ADF during development)
+│   ├── 03_dev_runner.py          # dev runner and tests (stands in for ADF during development)
 │   ├── 04_gold_dimensions.py     # dim_date, dim_product, dim_seller, dim_customer (SCD2)
 │   ├── 05_gold_facts.py          # fact_orders, fact_order_items (MERGE)
 │   ├── 06_gold_aggregates.py     # business aggregates
 │   ├── 07_gold_tests.py          # read-only validation tests
 │   ├── 08_gold_runner.py         # runs dimensions then facts for each day
-|   └── 09_perf_tuning.py         # Performance tuning
+│   └── 09_perf_tuning.ipynb      # before/after performance benchmark
 └── DOCS/
     ├── screenshots/
-    └── powerbi/
+    └── powerbi/                  # dashboard PDF
+
 ```
 
 ---
@@ -314,7 +322,7 @@ rows_read = rows_rejected + rows_written + rows_deduped
    ```
 
 4. Upload the output to the `source` container.
-5. Run `sql/01_control_tables.sql` and `sql/02_audit_log.sql` on the Azure SQL database (in separate blocks if the portal editor rejects `GO`).
+5. Run `sql/01_control_tables.sql`, `sql/02_audit_log.sql` and `sql/03_pipeline_support.sql` on the Azure SQL database (in separate blocks if the portal editor rejects `GO`) Create a Key Vault and the linked services (Key Vault, SQL, Databricks, ADLS) and Connect ADF to this repo (root folder /adf), then run pl_master_daily for a date, or enable tr_daily_tumbling.
 6. In ADF, copy `source` to `raw` (binary, preserve hierarchy).
 7. Give Databricks access to storage (Access Connector + Unity Catalog external locations for raw, bronze, silver and gold).
 8. Import the notebooks into one Databricks folder and set `STORAGE_ACCOUNT` in `00_common.py`.
